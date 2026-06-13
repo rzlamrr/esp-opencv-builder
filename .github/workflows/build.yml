@@ -1,0 +1,77 @@
+name: Build OpenCV for ESP32
+
+on:
+  workflow_dispatch:
+    inputs:
+      esp_idf_version:
+        description: "espressif/idf Docker image tag (see hub.docker.com/r/espressif/idf/tags)."
+        required: false
+        default: "release-v5.3"
+
+permissions:
+  contents: write   # needed to create/update a release in this repo
+
+jobs:
+  build-opencv:
+    runs-on: ubuntu-latest
+    env:
+      IDF_VER: ${{ github.event.inputs.esp_idf_version || 'release-v5.3' }}
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Checkout esp32-opencv (upstream, no fork)
+        uses: actions/checkout@v6
+        with:
+          repository: nicklasb/esp32-opencv
+          submodules: "recursive"
+
+      - name: Record upstream commit used
+        id: upstream
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      # Cache ccache so rebuilds (e.g. switching ESP-IDF version) are faster
+      - name: Cache ccache
+        uses: actions/cache@v4
+        with:
+          path: ~/.ccache
+          key: opencv-esp32-ccache-${{ env.IDF_VER }}-${{ hashFiles('modules/**', 'esp32/scripts/**', 'esp32/cmake/**') }}
+          restore-keys: |
+            opencv-esp32-ccache-${{ env.IDF_VER }}-
+
+      # Runs inside the espressif/idf:<tag> container, so $IDF_PATH and the
+      # xtensa-esp32-elf toolchain are already available
+      - name: Cross-compile OpenCV for ESP32
+        uses: espressif/esp-idf-ci-action@v1
+        with:
+          esp_idf_version: ${{ env.IDF_VER }}
+          target: esp32
+          command: |
+            set -e
+            export IDF_CCACHE_ENABLE=1
+
+            # Locate toolchain-esp32.cmake (path can differ between IDF versions)
+            TOOLCHAIN_FILE=$(find "$IDF_PATH" -name "toolchain-esp32.cmake" -print -quit)
+            if [ -z "$TOOLCHAIN_FILE" ]; then
+              echo "::error::toolchain-esp32.cmake not found under $IDF_PATH"
+              exit 1
+            fi
+            echo "Using toolchain file: $TOOLCHAIN_FILE"
+
+            bash esp32/scripts/build_opencv_for_esp32.sh "$TOOLCHAIN_FILE" esp32/lib
+
+      - name: Zip build output
+        run: |
+          cd esp32/lib
+          zip -r "${GITHUB_WORKSPACE}/opencv-esp32-${IDF_VER}.zip" .
+
+      - name: Publish to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: opencv-esp32-${{ env.IDF_VER }}
+          name: "OpenCV for ESP32 (ESP-IDF ${{ env.IDF_VER }})"
+          make_latest: false
+          body: |
+            Statically cross-compiled OpenCV (libopencv_core, libopencv_imgproc,
+            libopencv_imgcodecs, libade, etc.) from nicklasb/esp32-opencv
+            (upstream commit: ${{ steps.upstream.outputs.sha }})
+            built with ESP-IDF toolchain `${{ env.IDF_VER }}`.
+          files: opencv-esp32-*.zip
