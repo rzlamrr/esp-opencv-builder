@@ -56,6 +56,15 @@ jobs:
           fi
           echo "Using toolchain file: $TOOLCHAIN_FILE"
 
+          # Known issue (opencv #22949 / esp32-opencv #11): on platforms where
+          # int32_t aliases int/long ambiguously, `float64_t(1 << EXPTAB_SCALE)`
+          # in softfloat.cpp is ambiguous between the int32_t/int64_t
+          # constructors. Disambiguate with an explicit int64_t cast.
+          SOFTFLOAT_SRC="modules/core/src/softfloat.cpp"
+          if [ -f "$SOFTFLOAT_SRC" ]; then
+            sed -i 's/float64_t(1 << EXPTAB_SCALE)/float64_t((int64_t)(1 << EXPTAB_SCALE))/' "$SOFTFLOAT_SRC"
+          fi
+
           # The upstream script does `cmake ... | tee /dev/tty | grep ...`,
           # which fails in CI (no controlling terminal). Patch it to use
           # /dev/stderr so the cmake summary is still visible in logs
@@ -75,13 +84,25 @@ jobs:
           set -e
 
           if [ $BUILD_STATUS -ne 0 ]; then
+            PATCHED_SOMETHING=0
+
             ADE_HEADER="build/3rdparty/ade/ade-0.1.1f/sources/ade/include/ade/typed_graph.hpp"
             if [ -f "$ADE_HEADER" ] && ! grep -q '#include <cstdint>' "$ADE_HEADER"; then
-              echo "Detected missing <cstdint> in ade typed_graph.hpp (GCC 13 stricter includes). Patching and resuming build."
+              echo "Patching ade typed_graph.hpp for missing <cstdint>."
               sed -i '0,/#include "typed_metadata.hpp"/ s/#include "typed_metadata.hpp"/#include <cstdint>\n#include "typed_metadata.hpp"/' "$ADE_HEADER"
+              PATCHED_SOMETHING=1
+            fi
 
-              # Resume the build (configure already done, just re-run make + the
-              # install/copy steps the upstream script does after make)
+            if ! grep -q 'float64_t((int64_t)(1 << EXPTAB_SCALE))' "$SOFTFLOAT_SRC" 2>/dev/null; then
+              if grep -q 'float64_t(1 << EXPTAB_SCALE)' "$SOFTFLOAT_SRC" 2>/dev/null; then
+                echo "Patching softfloat.cpp for ambiguous float64_t(int) overload."
+                sed -i 's/float64_t(1 << EXPTAB_SCALE)/float64_t((int64_t)(1 << EXPTAB_SCALE))/' "$SOFTFLOAT_SRC"
+                PATCHED_SOMETHING=1
+              fi
+            fi
+
+            if [ $PATCHED_SOMETHING -eq 1 ]; then
+              echo "Resuming build after patch."
               (
                 cd build
                 make -j3
@@ -98,9 +119,9 @@ jobs:
               for mod in core imgproc imgcodecs; do
                 cp -r "modules/${mod}/include/opencv2" "$LIB_INSTALL_PATH/opencv/"
               done
-              echo "installation done (after ade patch + resume)."
+              echo "installation done (after patch + resume)."
             else
-              echo "::error::Build failed for a reason other than the known ade <cstdint> issue."
+              echo "::error::Build failed for a reason other than the known ade/softfloat issues."
               exit $BUILD_STATUS
             fi
           fi
