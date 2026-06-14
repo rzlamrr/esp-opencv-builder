@@ -60,26 +60,29 @@ jobs:
               exit 1
             fi
             echo "Using toolchain file: $TOOLCHAIN_FILE"
-            printf '%s' "$TOOLCHAIN_FILE" > "$GITHUB_WORKSPACE/.toolchain_file_path"
-            cat "$GITHUB_WORKSPACE/.toolchain_file_path"
-            echo "(end of toolchain path file content)"
+
+            # Bake the resolved toolchain path directly into the script's
+            # TOOLCHAIN_CMAKE_PATH default (avoids passing it as $1, since
+            # this whole command runs as a single bash -c string and
+            # single-quoted segments would break the outer quoting).
+            ESCAPED_PATH=$(printf "%s" "$TOOLCHAIN_FILE" | sed "s/[&/\\\\]/\\\\&/g")
+            sed -i "s#^TOOLCHAIN_CMAKE_PATH=.*#TOOLCHAIN_CMAKE_PATH=${ESCAPED_PATH}#" esp32/scripts/build_opencv_for_esp32.sh
+            grep "^TOOLCHAIN_CMAKE_PATH=" esp32/scripts/build_opencv_for_esp32.sh
 
             # Lightweight heartbeat so the log doesn't look stalled during
             # long compilation steps
             ( while true; do sleep 60; echo "[heartbeat] still building... $(date +%H:%M:%S)"; done ) &
             HEARTBEAT_PID=$!
-            trap 'kill $HEARTBEAT_PID 2>/dev/null || true' EXIT
+            trap "kill \$HEARTBEAT_PID 2>/dev/null || true" EXIT
 
             # The upstream script does `cmake ... | tee /dev/tty | grep ...`,
             # which fails in CI (no controlling terminal). Patch it to use
             # /dev/stderr so the cmake summary is still visible in logs
             # while the pipe to grep continues to work.
-            sed -i 's#tee /dev/tty#tee /dev/stderr#' esp32/scripts/build_opencv_for_esp32.sh
+            sed -i "s#tee /dev/tty#tee /dev/stderr#" esp32/scripts/build_opencv_for_esp32.sh
 
-            TOOLCHAIN_FILE="$(cat "$GITHUB_WORKSPACE/.toolchain_file_path")"
-            rm -f "$GITHUB_WORKSPACE/.toolchain_file_path"
-            echo "About to invoke build script with TOOLCHAIN_FILE='${TOOLCHAIN_FILE}'"
-            printf 'y\n' | bash esp32/scripts/build_opencv_for_esp32.sh "${TOOLCHAIN_FILE}" esp32/lib
+            echo "Invoking build script (toolchain path baked in as default)"
+            printf "y\n" | bash esp32/scripts/build_opencv_for_esp32.sh "" esp32/lib
 
       - name: Zip build output
         run: |
