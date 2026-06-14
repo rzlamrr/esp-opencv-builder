@@ -38,10 +38,25 @@ jobs:
           command: |
             set -e
 
-            # Locate toolchain-esp32.cmake (path can differ between IDF versions)
-            TOOLCHAIN_FILE=$(find "$IDF_PATH" -name "toolchain-esp32.cmake" -print -quit)
+            # Debug: confirm IDF_PATH and locate toolchain-esp32.cmake
+            echo "IDF_PATH=${IDF_PATH:-<unset>}"
+            echo "whoami: $(whoami), HOME=$HOME"
+
+            TOOLCHAIN_FILE=""
+            for CANDIDATE_ROOT in "$IDF_PATH" "/opt/esp/idf" "$HOME/esp/esp-idf" "/root/esp/esp-idf"; do
+              if [ -n "$CANDIDATE_ROOT" ] && [ -d "$CANDIDATE_ROOT" ]; then
+                FOUND=$(find "$CANDIDATE_ROOT" -name "toolchain-esp32.cmake" -print -quit 2>/dev/null)
+                if [ -n "$FOUND" ]; then
+                  TOOLCHAIN_FILE="$FOUND"
+                  break
+                fi
+              fi
+            done
+
             if [ -z "$TOOLCHAIN_FILE" ]; then
-              echo "::error::toolchain-esp32.cmake not found under $IDF_PATH"
+              echo "::error::toolchain-esp32.cmake not found. Searched IDF_PATH, /opt/esp/idf, \$HOME/esp/esp-idf, /root/esp/esp-idf"
+              echo "Listing /opt/esp:"
+              find /opt/esp -maxdepth 4 -iname "*toolchain*" 2>/dev/null || true
               exit 1
             fi
             echo "Using toolchain file: $TOOLCHAIN_FILE"
@@ -51,6 +66,12 @@ jobs:
             ( while true; do sleep 60; echo "[heartbeat] still building... $(date +%H:%M:%S)"; done ) &
             HEARTBEAT_PID=$!
             trap 'kill $HEARTBEAT_PID 2>/dev/null || true' EXIT
+
+            # The upstream script does `cmake ... | tee /dev/tty | grep ...`,
+            # which fails in CI (no controlling terminal). Patch it to use
+            # /dev/stderr so the cmake summary is still visible in logs
+            # while the pipe to grep continues to work.
+            sed -i 's#tee /dev/tty#tee /dev/stderr#' esp32/scripts/build_opencv_for_esp32.sh
 
             bash esp32/scripts/build_opencv_for_esp32.sh "$TOOLCHAIN_FILE" esp32/lib <<< "y"
 
