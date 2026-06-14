@@ -73,7 +73,8 @@ jobs:
             # while the pipe to grep continues to work.
             sed -i 's#tee /dev/tty#tee /dev/stderr#' esp32/scripts/build_opencv_for_esp32.sh
 
-            bash esp32/scripts/build_opencv_for_esp32.sh "$TOOLCHAIN_FILE" esp32/lib <<< "y"
+            echo "About to invoke build script with TOOLCHAIN_FILE='${TOOLCHAIN_FILE}'"
+            printf 'y\n' | bash esp32/scripts/build_opencv_for_esp32.sh "${TOOLCHAIN_FILE}" esp32/lib
 
       - name: Zip build output
         run: |
