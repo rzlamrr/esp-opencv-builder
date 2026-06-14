@@ -28,16 +28,6 @@ jobs:
         id: upstream
         run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
-      # Cache ccache so rebuilds (e.g. switching ESP-IDF version, or after
-      # a fix to esp32/cmake/) reuse previously compiled object files
-      - name: Cache ccache
-        uses: actions/cache@v4
-        with:
-          path: ~/.ccache
-          key: opencv-esp32-ccache-${{ env.IDF_VER }}-${{ hashFiles('modules/**', 'esp32/scripts/**', 'esp32/cmake/**') }}
-          restore-keys: |
-            opencv-esp32-ccache-${{ env.IDF_VER }}-
-
       # Runs inside the espressif/idf:<tag> container, so $IDF_PATH and the
       # xtensa-esp32-elf toolchain are already available
       - name: Cross-compile OpenCV for ESP32
@@ -47,15 +37,6 @@ jobs:
           target: esp32
           command: |
             set -e
-            export IDF_CCACHE_ENABLE=1
-            export CCACHE_DIR="$HOME/.ccache"
-
-            # Force parallel build so CMake's --build step uses all
-            # available cores instead of a default serial (-j1) build
-            export CMAKE_BUILD_PARALLEL_LEVEL=$(nproc)
-            echo "Building with CMAKE_BUILD_PARALLEL_LEVEL=${CMAKE_BUILD_PARALLEL_LEVEL}"
-
-            ccache -z   # reset stats so the summary below reflects this run
 
             # Locate toolchain-esp32.cmake (path can differ between IDF versions)
             TOOLCHAIN_FILE=$(find "$IDF_PATH" -name "toolchain-esp32.cmake" -print -quit)
@@ -71,11 +52,7 @@ jobs:
             HEARTBEAT_PID=$!
             trap 'kill $HEARTBEAT_PID 2>/dev/null || true' EXIT
 
-            bash esp32/scripts/build_opencv_for_esp32.sh "$TOOLCHAIN_FILE" esp32/lib
-
-      - name: Show ccache stats
-        if: always()
-        run: ccache -s
+            bash esp32/scripts/build_opencv_for_esp32.sh "$TOOLCHAIN_FILE" esp32/lib <<< "y"
 
       - name: Zip build output
         run: |
