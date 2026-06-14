@@ -69,7 +69,41 @@ jobs:
           trap 'kill $HEARTBEAT_PID 2>/dev/null || true' EXIT
 
           echo "About to invoke build script with TOOLCHAIN_FILE='${TOOLCHAIN_FILE}'"
+          set +e
           printf 'y\n' | bash esp32/scripts/build_opencv_for_esp32.sh "${TOOLCHAIN_FILE}" esp32/lib
+          BUILD_STATUS=$?
+          set -e
+
+          if [ $BUILD_STATUS -ne 0 ]; then
+            ADE_HEADER="build/3rdparty/ade/ade-0.1.1f/sources/ade/include/ade/typed_graph.hpp"
+            if [ -f "$ADE_HEADER" ] && ! grep -q '#include <cstdint>' "$ADE_HEADER"; then
+              echo "Detected missing <cstdint> in ade typed_graph.hpp (GCC 13 stricter includes). Patching and resuming build."
+              sed -i '0,/#include "typed_metadata.hpp"/ s/#include "typed_metadata.hpp"/#include <cstdint>\n#include "typed_metadata.hpp"/' "$ADE_HEADER"
+
+              # Resume the build (configure already done, just re-run make + the
+              # install/copy steps the upstream script does after make)
+              (
+                cd build
+                make -j3
+              )
+
+              # Re-run install/copy steps by re-invoking the script, which will
+              # rm -rf build/ again -- instead, replicate the copy steps here.
+              LIB_INSTALL_PATH="esp32/lib"
+              mkdir -p "$LIB_INSTALL_PATH/opencv" "$LIB_INSTALL_PATH/opencv/3rdparty" "$LIB_INSTALL_PATH/opencv/opencv2"
+              cp build/lib/* "$LIB_INSTALL_PATH/opencv/"
+              cp build/3rdparty/lib/* "$LIB_INSTALL_PATH/opencv/3rdparty/"
+              cp build/opencv2/* "$LIB_INSTALL_PATH/opencv/opencv2/"
+              cp include/opencv2/opencv.hpp "$LIB_INSTALL_PATH/opencv/opencv2/"
+              for mod in core imgproc imgcodecs; do
+                cp -r "modules/${mod}/include/opencv2" "$LIB_INSTALL_PATH/opencv/"
+              done
+              echo "installation done (after ade patch + resume)."
+            else
+              echo "::error::Build failed for a reason other than the known ade <cstdint> issue."
+              exit $BUILD_STATUS
+            fi
+          fi
           SCRIPT_EOF
           chmod +x inner_build.sh
 
