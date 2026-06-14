@@ -60,6 +60,9 @@ jobs:
               exit 1
             fi
             echo "Using toolchain file: $TOOLCHAIN_FILE"
+            printf '%s' "$TOOLCHAIN_FILE" > /tmp/toolchain_file_path
+            cat /tmp/toolchain_file_path
+            echo "(end of toolchain path file content)"
 
             # Lightweight heartbeat so the log doesn't look stalled during
             # long compilation steps
@@ -73,6 +76,7 @@ jobs:
             # while the pipe to grep continues to work.
             sed -i 's#tee /dev/tty#tee /dev/stderr#' esp32/scripts/build_opencv_for_esp32.sh
 
+            TOOLCHAIN_FILE="$(cat /tmp/toolchain_file_path)"
             echo "About to invoke build script with TOOLCHAIN_FILE='${TOOLCHAIN_FILE}'"
             printf 'y\n' | bash esp32/scripts/build_opencv_for_esp32.sh "${TOOLCHAIN_FILE}" esp32/lib
 
